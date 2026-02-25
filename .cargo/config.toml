@@ -1,0 +1,11 @@
+[unstable]
+build-std-features = ["optimize_for_size"]
+
+[build]
+rustflags = ["-Zlocation-detail=none"]
+
+[target.'cfg(target_os = "windows")']
+rustflags = ["--cfg", "windows_slim_errors"]
+
+[alias]
+release = ["-Z", "build-std=std,panic_abort", "build", "--release"]
