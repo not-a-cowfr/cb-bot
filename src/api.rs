@@ -65,16 +65,108 @@ pub async fn handle_request(
 			StatusCode::INTERNAL_SERVER_ERROR
 		})?;
 
-	let interaction = match m
-		.await_component_interaction(&app_state.shard)
-		.timeout(Duration::from_secs(60 * 3))
-		.await
-	{
-		| Some(x) => x,
-		| None => {
-			m.edit(
-				&app_state.http,
-				EditMessage::default()
+	let http = app_state.http.clone();
+	let shard = app_state.shard.clone();
+
+	tokio::spawn(async move {
+		let interaction = match m
+			.await_component_interaction(&shard)
+			.timeout(Duration::from_secs(60 * 3))
+			.await
+		{
+			| Some(x) => x,
+			| None => {
+				m.edit(
+					&http,
+					EditMessage::default()
+						.button(
+							CreateButton::new("accept")
+								.style(ButtonStyle::Success)
+								.label("Accept")
+								.disabled(true),
+						)
+						.button(
+							CreateButton::new("decline")
+								.style(ButtonStyle::Danger)
+								.label("Decline")
+								.disabled(true),
+						),
+				)
+				.await
+				.ok();
+
+				return Err(StatusCode::INTERNAL_SERVER_ERROR);
+			},
+		};
+
+		interaction
+			.create_response(&http, CreateInteractionResponse::Acknowledge)
+			.await
+			.map_err(|e| {
+				eprintln!("Failed to defer: {e}");
+				StatusCode::INTERNAL_SERVER_ERROR
+			})?;
+
+		let label = match interaction.data.custom_id.as_str() {
+			| "accept" => {
+				let image_url = m
+					.embeds
+					.first()
+					.map(|e| e.image.clone().unwrap().url)
+					.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+				let img_bytes = reqwest::get(&image_url)
+					.await
+					.map_err(|e| {
+						eprintln!("Failed to fetch image: {e}");
+						StatusCode::INTERNAL_SERVER_ERROR
+					})?
+					.bytes()
+					.await
+					.map_err(|e| {
+						eprintln!("Failed to read image bytes: {e}");
+						StatusCode::INTERNAL_SERVER_ERROR
+					})?;
+
+				let part = reqwest::multipart::Part::bytes(img_bytes.to_vec())
+					.file_name(filename.clone())
+					.mime_str(&content_type)
+					.map_err(|e| {
+						eprintln!("Failed to build part: {e}");
+						StatusCode::INTERNAL_SERVER_ERROR
+					})?;
+
+				let form = reqwest::multipart::Form::new().part("files[]", part);
+
+				let api_key = std::env::var("API_KEY").map_err(|_| {
+					eprintln!("Missing API_KEY env var");
+					StatusCode::INTERNAL_SERVER_ERROR
+				})?;
+
+				let client = reqwest::Client::new();
+
+				let url = format!("https://cuteboys.love/api/upload?key={}", api_key);
+
+				let res = client.post(url).multipart(form).send().await.map_err(|e| {
+					eprintln!("Upload failed: {e}");
+					StatusCode::INTERNAL_SERVER_ERROR
+				})?;
+
+				if !res.status().is_success() {
+					eprintln!("Upload returned {}", res.status());
+					return Err(StatusCode::INTERNAL_SERVER_ERROR);
+				}
+
+				"✅ Accepted"
+			},
+			| "decline" => "❌ Declined",
+			| _ => return Err(StatusCode::BAD_REQUEST),
+		};
+		interaction
+			.edit_response(
+				&http,
+				serenity::all::EditInteractionResponse::default()
+					.content(label)
 					.button(
 						CreateButton::new("accept")
 							.style(ButtonStyle::Success)
@@ -89,98 +181,13 @@ pub async fn handle_request(
 					),
 			)
 			.await
-			.ok();
-
-			return Err(StatusCode::INTERNAL_SERVER_ERROR);
-		},
-	};
-
-	interaction
-		.create_response(&app_state.http, CreateInteractionResponse::Acknowledge)
-		.await
-		.map_err(|e| {
-			eprintln!("Failed to defer: {e}");
-			StatusCode::INTERNAL_SERVER_ERROR
-		})?;
-
-	let label = match interaction.data.custom_id.as_str() {
-		| "accept" => {
-			let image_url = m
-				.embeds
-				.first()
-				.map(|e| e.image.clone().unwrap().url)
-				.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-			let img_bytes = reqwest::get(&image_url)
-				.await
-				.map_err(|e| {
-					eprintln!("Failed to fetch image: {e}");
-					StatusCode::INTERNAL_SERVER_ERROR
-				})?
-				.bytes()
-				.await
-				.map_err(|e| {
-					eprintln!("Failed to read image bytes: {e}");
-					StatusCode::INTERNAL_SERVER_ERROR
-				})?;
-
-			let part = reqwest::multipart::Part::bytes(img_bytes.to_vec())
-				.file_name(filename.clone())
-				.mime_str(&content_type)
-				.map_err(|e| {
-					eprintln!("Failed to build part: {e}");
-					StatusCode::INTERNAL_SERVER_ERROR
-				})?;
-
-			let form = reqwest::multipart::Form::new().part("files[]", part);
-
-			let api_key = std::env::var("API_KEY").map_err(|_| {
-				eprintln!("Missing API_KEY env var");
+			.map_err(|e| {
+				eprintln!("Failed to update message: {e}");
 				StatusCode::INTERNAL_SERVER_ERROR
 			})?;
 
-			let client = reqwest::Client::new();
-
-			let url = format!("https://cuteboys.love/api/upload?key={}", api_key);
-
-			let res = client.post(url).multipart(form).send().await.map_err(|e| {
-				eprintln!("Upload failed: {e}");
-				StatusCode::INTERNAL_SERVER_ERROR
-			})?;
-
-			if !res.status().is_success() {
-				eprintln!("Upload returned {}", res.status());
-				return Err(StatusCode::INTERNAL_SERVER_ERROR);
-			}
-
-			"✅ Accepted"
-		},
-		| "decline" => "❌ Declined",
-		| _ => return Err(StatusCode::BAD_REQUEST),
-	};
-	interaction
-		.edit_response(
-			&app_state.http,
-			serenity::all::EditInteractionResponse::default()
-				.content(label)
-				.button(
-					CreateButton::new("accept")
-						.style(ButtonStyle::Success)
-						.label("Accept")
-						.disabled(true),
-				)
-				.button(
-					CreateButton::new("decline")
-						.style(ButtonStyle::Danger)
-						.label("Decline")
-						.disabled(true),
-				),
-		)
-		.await
-		.map_err(|e| {
-			eprintln!("Failed to update message: {e}");
-			StatusCode::INTERNAL_SERVER_ERROR
-		})?;
+		Ok(StatusCode::ACCEPTED)
+	});
 
 	Ok(StatusCode::ACCEPTED)
 }
