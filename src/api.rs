@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
+use reqwest::Response;
 use serenity::all::{
 	ButtonStyle,
 	ChannelId,
@@ -16,6 +17,7 @@ use serenity::all::{
 };
 
 use crate::AppState;
+use crate::types::Error;
 
 pub async fn handle_request(
 	State(app_state): State<AppState>,
@@ -146,42 +148,12 @@ pub async fn handle_request(
 					.map(|e| e.image.clone().unwrap().url)
 					.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-				let img_bytes = reqwest::get(&image_url)
+				let res = upload_image(image_url, filename, content_type)
 					.await
 					.map_err(|e| {
-						eprintln!("Failed to fetch image: {e}");
-						StatusCode::INTERNAL_SERVER_ERROR
-					})?
-					.bytes()
-					.await
-					.map_err(|e| {
-						eprintln!("Failed to read image bytes: {e}");
+						eprintln!("Error uploading image: {}", e);
 						StatusCode::INTERNAL_SERVER_ERROR
 					})?;
-
-				let part = reqwest::multipart::Part::bytes(img_bytes.to_vec())
-					.file_name(filename.clone())
-					.mime_str(&content_type)
-					.map_err(|e| {
-						eprintln!("Failed to build part: {e}");
-						StatusCode::INTERNAL_SERVER_ERROR
-					})?;
-
-				let form = reqwest::multipart::Form::new().part("files[]", part);
-
-				let api_key = std::env::var("API_KEY").map_err(|_| {
-					eprintln!("Missing API_KEY env var");
-					StatusCode::INTERNAL_SERVER_ERROR
-				})?;
-
-				let client = reqwest::Client::new();
-
-				let url = format!("https://cuteboys.love/api/upload?key={}", api_key);
-
-				let res = client.post(url).multipart(form).send().await.map_err(|e| {
-					eprintln!("Upload failed: {e}");
-					StatusCode::INTERNAL_SERVER_ERROR
-				})?;
 
 				if !res.status().is_success() {
 					eprintln!("Upload returned {}", res.status());
@@ -221,4 +193,28 @@ pub async fn handle_request(
 	});
 
 	Ok(StatusCode::ACCEPTED)
+}
+
+pub async fn upload_image(
+	image_url: String,
+	file_name: String,
+	content_type: String,
+) -> Result<Response, Error> {
+	let img_bytes = reqwest::get(&image_url).await?.bytes().await?;
+
+	let part = reqwest::multipart::Part::bytes(img_bytes.to_vec())
+		.file_name(file_name.clone())
+		.mime_str(&content_type)?;
+
+	let form = reqwest::multipart::Form::new().part("files[]", part);
+
+	let api_key = std::env::var("API_KEY")?;
+
+	let client = reqwest::Client::new();
+
+	let url = format!("https://cuteboys.love/api/upload?key={}", api_key);
+
+	let res = client.post(url).multipart(form).send().await?;
+
+	Ok(res)
 }
