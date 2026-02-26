@@ -9,10 +9,10 @@ use serenity::all::{
 	CreateButton,
 	CreateEmbed,
 	CreateInteractionResponse,
+	CreateInteractionResponseMessage,
 	CreateMessage,
 	EditMessage,
-        RoleId,
-        CreateInteractionResponseMessage
+	RoleId,
 };
 
 use crate::AppState;
@@ -38,14 +38,24 @@ pub async fn handle_request(
 	let content_type = field.content_type().unwrap_or("image/png").to_string();
 	let bytes = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
 
-	let channel_id = ChannelId::new(std::env::var("CHANNEL").expect("Missing CHANNEL env var").parse::<u64>().expect("CHANNEL env var is not a valid channel id"));
-        let role_id = RoleId::new(std::env::var("VERIFYER_ROLE").expect("Missing VERIFYER_ROLE env var").parse::<u64>().expect("VERIFYER_ROLE env var is not a valid role id"));
+	let channel_id = ChannelId::new(
+		std::env::var("CHANNEL")
+			.expect("Missing CHANNEL env var")
+			.parse::<u64>()
+			.expect("CHANNEL env var is not a valid channel id"),
+	);
+	let role_id = RoleId::new(
+		std::env::var("VERIFYER_ROLE")
+			.expect("Missing VERIFYER_ROLE env var")
+			.parse::<u64>()
+			.expect("VERIFYER_ROLE env var is not a valid role id"),
+	);
 
 	let mut m = channel_id
 		.send_message(
 			&app_state.http,
 			CreateMessage::default()
-                                .content(format!("<@&{role_id}>"))
+				.content(format!("<@&{role_id}>"))
 				.add_file(CreateAttachment::bytes(bytes, &filename))
 				.embed(
 					CreateEmbed::default()
@@ -111,7 +121,7 @@ pub async fn handle_request(
 				StatusCode::INTERNAL_SERVER_ERROR
 			})?;
 
-if interaction
+		if interaction
 			.member
 			.clone()
 			.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
